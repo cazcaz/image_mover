@@ -204,22 +204,17 @@ pub fn get_unique_file_path(original_path: &PathBuf) -> io::Result<PathBuf> {
     }
 }
 
-pub fn copy_media_files(source: &PathBuf, destination: &PathBuf) -> io::Result<usize> {
+pub fn copy_media_files(
+    source: &PathBuf,
+    destination: &PathBuf,
+    media_files: &Vec<PathBuf>,
+) -> io::Result<usize> {
     println!("Scanning for media files...");
-
-    // First, collect all media files to be copied
-    let mut media_files = Vec::new();
-    collect_media_files(source, source, &mut media_files, Some(destination))?;
 
     if media_files.is_empty() {
         println!("No media files found in the source directory.");
         return Ok(0);
     }
-
-    println!(
-        "Found {} media files. Starting parallel copy...",
-        media_files.len()
-    );
 
     // Use atomic counter for thread-safe counting
     let copied_count = Arc::new(AtomicUsize::new(0));

@@ -115,7 +115,7 @@ fn run_image_mover() -> Result<()> {
         return Ok(());
     }
 
-    let count = match copy_media_files(&source_path, &dest_path) {
+    let count = match copy_media_files(&source_path, &dest_path, &media_files) {
         Ok(count) => count,
         Err(e) => {
             eprintln!("Error copying files: {}", e);
