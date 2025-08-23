@@ -5,7 +5,7 @@ mod directory;
 mod file_ops;
 mod media;
 
-use dialogs::{select_folder, show_deletion_prompt};
+use dialogs::{select_folder, show_completion_dialog, show_deletion_prompt};
 use file_ops::{copy_media_files, delete_original_files, validate_folder_paths};
 
 fn main() -> Result<()> {
@@ -58,7 +58,6 @@ fn run_image_mover() -> Result<()> {
         return Ok(());
     }
 
-    println!("Copying image and video files...");
     let count = match copy_media_files(&source_path, &dest_path) {
         Ok(count) => count,
         Err(e) => {
@@ -84,6 +83,10 @@ fn run_image_mover() -> Result<()> {
 
     if !should_delete {
         println!("Original files kept as requested.");
+        // Show completion dialog
+        if let Err(e) = show_completion_dialog() {
+            eprintln!("Error showing completion dialog: {}", e);
+        }
         return Ok(());
     }
 
@@ -95,6 +98,11 @@ fn run_image_mover() -> Result<()> {
         Err(e) => {
             eprintln!("Error deleting original files: {}", e);
         }
+    }
+
+    // Show completion dialog
+    if let Err(e) = show_completion_dialog() {
+        eprintln!("Error showing completion dialog: {}", e);
     }
 
     Ok(())

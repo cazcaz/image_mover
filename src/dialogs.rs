@@ -60,3 +60,14 @@ pub fn show_deletion_prompt(file_count: usize) -> Result<bool> {
         Ok(result == IDYES)
     }
 }
+
+pub fn show_completion_dialog() -> Result<()> {
+    unsafe {
+        let title = HSTRING::from("Process Complete");
+        let message = HSTRING::from("Done! All operations completed successfully.");
+
+        MessageBoxW(None, &message, &title, MB_OK | MB_ICONINFORMATION);
+
+        Ok(())
+    }
+}

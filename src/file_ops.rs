@@ -15,15 +15,21 @@ use crate::media::collect_media_files;
 
 pub fn validate_folder_paths(source: &PathBuf, destination: &PathBuf) -> io::Result<()> {
     // Canonicalize paths to resolve any symbolic links and get absolute paths
-    let canonical_source = source
-        .canonicalize()
-        .map_err(|_| io::Error::new(io::ErrorKind::NotFound, "Unable to access source folder"))?;
-    let canonical_dest = destination.canonicalize().map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            "Unable to access destination folder",
-        )
-    })?;
+    let canonical_source = match source.canonicalize() {
+        Ok(path) => path,
+        Err(e) => {
+            eprintln!("Warning: Cannot access source folder '{}': {}", source.display(), e);
+            return Err(io::Error::new(io::ErrorKind::NotFound, "Unable to access source folder"));
+        }
+    };
+    
+    let canonical_dest = match destination.canonicalize() {
+        Ok(path) => path,
+        Err(e) => {
+            eprintln!("Warning: Cannot access destination folder '{}': {}", destination.display(), e);
+            return Err(io::Error::new(io::ErrorKind::NotFound, "Unable to access destination folder"));
+        }
+    };
 
     // Check if source and destination are the same
     if canonical_source == canonical_dest {
@@ -123,35 +129,59 @@ pub fn copy_media_files(source: &PathBuf, destination: &PathBuf) -> io::Result<u
 
             // Create destination directory structure if it doesn't exist, handling collisions
             if let Some(dest_dir) = dest_file.parent() {
-                create_unique_directory_structure(destination, dest_dir)?;
+                if let Err(e) = create_unique_directory_structure(destination, dest_dir) {
+                    eprintln!("Warning: Cannot create directory structure for '{}': {}", dest_dir.display(), e);
+                    return Err(e);
+                }
 
                 // The directory structure is now created, but we still need to check
                 // if the final file would collide and get a unique name for it
             }
 
             // Get unique file path to avoid overwriting existing files
-            dest_file = get_unique_file_path(&dest_file)?;
+            dest_file = match get_unique_file_path(&dest_file) {
+                Ok(path) => path,
+                Err(e) => {
+                    eprintln!("Warning: Cannot determine unique file path for '{}': {}", dest_file.display(), e);
+                    return Err(e);
+                }
+            };
 
             // Copy the file
-            fs::copy(&source_file, &dest_file)?;
-
-            // Thread-safe increment
-            let count = copied_count.fetch_add(1, Ordering::Relaxed) + 1;
-            println!(
-                "({}/{}) Copied: {} -> {}",
-                count,
-                media_files.len(),
-                source_file.display(),
-                dest_file.display()
-            );
-
-            Ok(())
+            match fs::copy(&source_file, &dest_file) {
+                Ok(_) => {
+                    // Thread-safe increment
+                    let count = copied_count.fetch_add(1, Ordering::Relaxed) + 1;
+                    println!(
+                        "({}/{}) Copied: {} -> {}",
+                        count,
+                        media_files.len(),
+                        source_file.display(),
+                        dest_file.display()
+                    );
+                    Ok(())
+                }
+                Err(e) => {
+                    eprintln!("Warning: Cannot copy file '{}' to '{}': {}", source_file.display(), dest_file.display(), e);
+                    Err(e)
+                }
+            }
         })
         .collect();
 
-    // Check for any errors
+    // Check for any errors - but continue if some files failed
+    let mut _successful_copies = 0;
+    let mut failed_copies = 0;
+    
     for result in results {
-        result?;
+        match result {
+            Ok(()) => _successful_copies += 1,
+            Err(_) => failed_copies += 1,
+        }
+    }
+    
+    if failed_copies > 0 {
+        println!("Warning: {} files could not be copied due to access issues", failed_copies);
     }
 
     Ok(copied_count.load(Ordering::Relaxed))
@@ -186,16 +216,26 @@ pub fn delete_original_files(source_path: &PathBuf) -> io::Result<usize> {
                     Ok(())
                 }
                 Err(e) => {
-                    eprintln!("Failed to delete {}: {}", file_path.display(), e);
+                    eprintln!("Warning: Failed to delete '{}': {}", file_path.display(), e);
                     Err(e)
                 }
             }
         })
         .collect();
 
-    // Check for any errors
+    // Check for any errors - but continue if some files failed
+    let mut _successful_deletions = 0;
+    let mut failed_deletions = 0;
+    
     for result in results {
-        result?;
+        match result {
+            Ok(()) => _successful_deletions += 1,
+            Err(_) => failed_deletions += 1,
+        }
+    }
+    
+    if failed_deletions > 0 {
+        println!("Warning: {} files could not be deleted due to access issues", failed_deletions);
     }
 
     // Clean up empty directories

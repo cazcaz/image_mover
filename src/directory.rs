@@ -29,16 +29,46 @@ pub fn cleanup_empty_directories(source_path: &PathBuf) -> io::Result<()> {
     Ok(())
 }
 
-pub fn collect_directories(current_dir: &PathBuf, directories: &mut Vec<PathBuf>) -> io::Result<()> {
-    let entries = fs::read_dir(current_dir)?;
+pub fn collect_directories(
+    current_dir: &PathBuf,
+    directories: &mut Vec<PathBuf>,
+) -> io::Result<()> {
+    let entries = match fs::read_dir(current_dir) {
+        Ok(entries) => entries,
+        Err(e) => {
+            eprintln!(
+                "Warning: Cannot access directory '{}': {}",
+                current_dir.display(),
+                e
+            );
+            return Ok(()); // Continue processing other directories
+        }
+    };
 
     for entry in entries {
-        let entry = entry?;
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => {
+                eprintln!(
+                    "Warning: Cannot read directory entry in '{}': {}",
+                    current_dir.display(),
+                    e
+                );
+                continue; // Skip this entry and continue with others
+            }
+        };
         let path = entry.path();
 
         if path.is_dir() {
             directories.push(path.clone());
-            collect_directories(&path, directories)?;
+            if let Err(e) = collect_directories(&path, directories) {
+                eprintln!(
+                    "Warning: Cannot access subdirectory '{}': {}",
+                    path.display(),
+                    e
+                );
+                // Continue processing other directories
+            }
         }
     }
 
@@ -48,7 +78,17 @@ pub fn collect_directories(current_dir: &PathBuf, directories: &mut Vec<PathBuf>
 pub fn create_unique_directory_structure(dest_root: &PathBuf, target_dir: &Path) -> io::Result<()> {
     // If target directory doesn't exist, create it normally
     if !target_dir.exists() {
-        return fs::create_dir_all(target_dir);
+        return match fs::create_dir_all(target_dir) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                eprintln!(
+                    "Warning: Cannot create directory '{}': {}",
+                    target_dir.display(),
+                    e
+                );
+                Err(e)
+            }
+        };
     }
 
     // If it exists, we need to create the path with potential renames
@@ -68,8 +108,17 @@ pub fn create_unique_directory_structure(dest_root: &PathBuf, target_dir: &Path)
                 current_path = next_path;
             } else {
                 // Create the directory
-                fs::create_dir(&next_path)?;
-                current_path = next_path;
+                match fs::create_dir(&next_path) {
+                    Ok(()) => current_path = next_path,
+                    Err(e) => {
+                        eprintln!(
+                            "Warning: Cannot create directory '{}': {}",
+                            next_path.display(),
+                            e
+                        );
+                        return Err(e);
+                    }
+                }
             }
         }
     }
