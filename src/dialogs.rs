@@ -71,3 +71,44 @@ pub fn show_completion_dialog() -> Result<()> {
         Ok(())
     }
 }
+
+pub fn show_copy_confirmation_dialog(
+    file_count: usize,
+    total_size: u64,
+    available_space: u64,
+    formatted_total_size: &str,
+    formatted_available_space: &str,
+) -> Result<bool> {
+    unsafe {
+        let title = HSTRING::from("Confirm Copy Operation");
+
+        let space_warning = if total_size > available_space {
+            "\n\n⚠️  WARNING: Not enough disk space available!"
+        } else {
+            ""
+        };
+
+        let message = HSTRING::from(&format!(
+            "Ready to copy {} media files\n\nTotal size to copy: {}\nAvailable space on destination: {}{}\n\nDo you want to proceed with the copy operation?",
+            file_count,
+            formatted_total_size,
+            formatted_available_space,
+            space_warning
+        ));
+
+        let result = MessageBoxW(
+            None,
+            &message,
+            &title,
+            MB_YESNO
+                | MB_ICONQUESTION
+                | if total_size > available_space {
+                    MB_ICONWARNING
+                } else {
+                    MB_ICONQUESTION
+                },
+        );
+
+        Ok(result == IDYES)
+    }
+}

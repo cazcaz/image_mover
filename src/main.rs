@@ -5,8 +5,13 @@ mod directory;
 mod file_ops;
 mod media;
 
-use dialogs::{select_folder, show_completion_dialog, show_deletion_prompt};
-use file_ops::{copy_media_files, delete_original_files, validate_folder_paths};
+use dialogs::{
+    select_folder, show_completion_dialog, show_copy_confirmation_dialog, show_deletion_prompt,
+};
+use file_ops::{
+    collect_media_files_and_calculate_size, copy_media_files, delete_original_files, format_bytes,
+    get_available_disk_space, validate_folder_paths,
+};
 
 fn main() -> Result<()> {
     run_with_com_initialization()
@@ -55,6 +60,58 @@ fn run_image_mover() -> Result<()> {
     // Check for invalid folder relationships
     if let Err(e) = validate_folder_paths(&source_path, &dest_path) {
         eprintln!("Error: {}", e);
+        return Ok(());
+    }
+
+    // Calculate total size and collect media files in one pass
+    println!("Scanning media files and calculating total size...");
+    let (media_files, total_size) =
+        match collect_media_files_and_calculate_size(&source_path, Some(&dest_path)) {
+            Ok((files, size)) => (files, size),
+            Err(e) => {
+                eprintln!("Error scanning files and calculating size: {}", e);
+                return Ok(());
+            }
+        };
+
+    if total_size == 0 || media_files.is_empty() {
+        println!("No media files found in the source directory.");
+        return Ok(());
+    }
+
+    let file_count = media_files.len();
+
+    // Get available disk space on destination drive
+    let available_space = match get_available_disk_space(&dest_path) {
+        Ok(space) => space,
+        Err(e) => {
+            eprintln!("Warning: Could not determine available disk space: {}", e);
+            // Continue with operation but warn user
+            u64::MAX // Set to max so we don't show space warning
+        }
+    };
+
+    // Format the sizes for display
+    let formatted_total_size = format_bytes(total_size);
+    let formatted_available_space = format_bytes(available_space);
+
+    // Show confirmation dialog with size and space information
+    let should_proceed = match show_copy_confirmation_dialog(
+        file_count,
+        total_size,
+        available_space,
+        &formatted_total_size,
+        &formatted_available_space,
+    ) {
+        Ok(proceed) => proceed,
+        Err(e) => {
+            eprintln!("Error showing confirmation dialog: {}", e);
+            return Ok(());
+        }
+    };
+
+    if !should_proceed {
+        println!("Copy operation cancelled by user.");
         return Ok(());
     }
 

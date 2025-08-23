@@ -173,3 +173,146 @@ pub fn is_media_file(extension: &str) -> bool {
         _ => false,
     }
 }
+
+/// Collect media files and calculate total size in one pass with progress display
+pub fn collect_media_files_with_size_and_progress(
+    current_dir: &PathBuf,
+    source_root: &PathBuf,
+    media_files: &mut Vec<PathBuf>,
+    total_size: &mut u64,
+    exclude_path: Option<&PathBuf>,
+) -> io::Result<()> {
+    let result = collect_media_files_with_size_progress(
+        current_dir,
+        source_root,
+        media_files,
+        total_size,
+        exclude_path,
+        true,
+    );
+
+    // Print a newline after progress to move to next line
+    if !media_files.is_empty() {
+        println!(); // Move to next line after progress display
+    }
+
+    result
+}
+
+/// Collect media files and calculate total size in one pass with progress reporting
+fn collect_media_files_with_size_progress(
+    current_dir: &PathBuf,
+    source_root: &PathBuf,
+    media_files: &mut Vec<PathBuf>,
+    total_size: &mut u64,
+    exclude_path: Option<&PathBuf>,
+    show_progress: bool,
+) -> io::Result<()> {
+    let entries = match fs::read_dir(current_dir) {
+        Ok(entries) => entries,
+        Err(e) => {
+            eprintln!(
+                "Warning: Cannot access directory '{}': {}",
+                current_dir.display(),
+                e
+            );
+            return Ok(()); // Continue processing other directories
+        }
+    };
+
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => {
+                eprintln!(
+                    "Warning: Cannot read directory entry in '{}': {}",
+                    current_dir.display(),
+                    e
+                );
+                continue; // Skip this entry and continue with others
+            }
+        };
+        let path = entry.path();
+
+        if path.is_dir() {
+            // Skip the destination directory if it's within the source to prevent infinite recursion
+            if let Some(exclude) = exclude_path {
+                if let (Ok(canonical_path), Ok(canonical_exclude)) =
+                    (path.canonicalize(), exclude.canonicalize())
+                {
+                    if canonical_path == canonical_exclude {
+                        println!("Skipping destination directory: {}", path.display());
+                        continue;
+                    }
+                }
+            }
+
+            // Recursively process subdirectories
+            if let Err(e) = collect_media_files_with_size_progress(
+                &path,
+                source_root,
+                media_files,
+                total_size,
+                exclude_path,
+                show_progress,
+            ) {
+                eprintln!(
+                    "Warning: Cannot access subdirectory '{}': {}",
+                    path.display(),
+                    e
+                );
+                // Continue processing other directories
+            }
+        } else if path.is_file() {
+            if let Some(extension) = path.extension() {
+                let ext = extension.to_string_lossy().to_lowercase();
+
+                // Check if it's an image or video file
+                if is_media_file(&ext) {
+                    // Get file size
+                    match fs::metadata(&path) {
+                        Ok(metadata) => {
+                            *total_size += metadata.len();
+
+                            // Calculate relative path from source root
+                            let relative_path = path
+                                .strip_prefix(source_root)
+                                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+                            media_files.push(relative_path.to_path_buf());
+
+                            // Show progress if requested
+                            if show_progress {
+                                print!("\rFiles found: {}", media_files.len());
+                                use std::io::Write;
+                                std::io::stdout().flush().unwrap_or(());
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "Warning: Cannot get file size for '{}': {}",
+                                path.display(),
+                                e
+                            );
+                            // Still add the file to the list even if we can't get its size
+                            let relative_path = path
+                                .strip_prefix(source_root)
+                                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+                            media_files.push(relative_path.to_path_buf());
+
+                            // Show progress if requested
+                            if show_progress {
+                                print!("\rFiles found: {}", media_files.len());
+                                use std::io::Write;
+                                std::io::stdout().flush().unwrap_or(());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
