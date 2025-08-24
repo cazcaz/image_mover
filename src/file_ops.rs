@@ -219,67 +219,77 @@ pub fn copy_media_files(
     // Use atomic counter for thread-safe counting
     let copied_count = Arc::new(AtomicUsize::new(0));
 
-    // Process files in parallel
-    let results: Vec<io::Result<()>> = media_files
-        .par_iter()
-        .map(|relative_path| {
-            let source_file = source.join(relative_path);
-            let mut dest_file = destination.join(relative_path);
+    // Create a custom thread pool to ensure proper cleanup
+    let pool = rayon::ThreadPoolBuilder::new().build().map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::Other,
+            format!("Failed to create thread pool: {}", e),
+        )
+    })?;
 
-            // Create destination directory structure if it doesn't exist, handling collisions
-            if let Some(dest_dir) = dest_file.parent() {
-                if let Err(e) = create_unique_directory_structure(destination, dest_dir) {
-                    eprintln!(
-                        "Warning: Cannot create directory structure for '{}': {}",
-                        dest_dir.display(),
-                        e
-                    );
-                    return Err(e);
+    // Process files in parallel using the custom thread pool
+    let results: Vec<io::Result<()>> = pool.install(|| {
+        media_files
+            .par_iter()
+            .map(|relative_path| {
+                let source_file = source.join(relative_path);
+                let mut dest_file = destination.join(relative_path);
+
+                // Create destination directory structure if it doesn't exist, handling collisions
+                if let Some(dest_dir) = dest_file.parent() {
+                    if let Err(e) = create_unique_directory_structure(destination, dest_dir) {
+                        eprintln!(
+                            "Warning: Cannot create directory structure for '{}': {}",
+                            dest_dir.display(),
+                            e
+                        );
+                        return Err(e);
+                    }
+
+                    // The directory structure is now created, but we still need to check
+                    // if the final file would collide and get a unique name for it
                 }
 
-                // The directory structure is now created, but we still need to check
-                // if the final file would collide and get a unique name for it
-            }
+                // Get unique file path to avoid overwriting existing files
+                dest_file = match get_unique_file_path(&dest_file) {
+                    Ok(path) => path,
+                    Err(e) => {
+                        eprintln!(
+                            "Warning: Cannot determine unique file path for '{}': {}",
+                            dest_file.display(),
+                            e
+                        );
+                        return Err(e);
+                    }
+                };
 
-            // Get unique file path to avoid overwriting existing files
-            dest_file = match get_unique_file_path(&dest_file) {
-                Ok(path) => path,
-                Err(e) => {
-                    eprintln!(
-                        "Warning: Cannot determine unique file path for '{}': {}",
-                        dest_file.display(),
-                        e
-                    );
-                    return Err(e);
+                // Copy the file
+                match fs::copy(&source_file, &dest_file) {
+                    Ok(_) => {
+                        // Thread-safe increment
+                        let count = copied_count.fetch_add(1, Ordering::Relaxed) + 1;
+                        println!(
+                            "({}/{}) Copied: {} -> {}",
+                            count,
+                            media_files.len(),
+                            source_file.display(),
+                            dest_file.display()
+                        );
+                        Ok(())
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "Warning: Cannot copy file '{}' to '{}': {}",
+                            source_file.display(),
+                            dest_file.display(),
+                            e
+                        );
+                        Err(e)
+                    }
                 }
-            };
-
-            // Copy the file
-            match fs::copy(&source_file, &dest_file) {
-                Ok(_) => {
-                    // Thread-safe increment
-                    let count = copied_count.fetch_add(1, Ordering::Relaxed) + 1;
-                    println!(
-                        "({}/{}) Copied: {} -> {}",
-                        count,
-                        media_files.len(),
-                        source_file.display(),
-                        dest_file.display()
-                    );
-                    Ok(())
-                }
-                Err(e) => {
-                    eprintln!(
-                        "Warning: Cannot copy file '{}' to '{}': {}",
-                        source_file.display(),
-                        dest_file.display(),
-                        e
-                    );
-                    Err(e)
-                }
-            }
-        })
-        .collect();
+            })
+            .collect()
+    });
 
     // Check for any errors - but continue if some files failed
     let mut _successful_copies = 0;
